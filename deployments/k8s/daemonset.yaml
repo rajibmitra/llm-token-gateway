@@ -1,0 +1,219 @@
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: llm-gateway
+  labels:
+    app.kubernetes.io/name: llm-token-gateway
+
+---
+# ConfigMap for gateway.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-config
+  namespace: llm-gateway
+data:
+  gateway.yaml: |
+    server:
+      listen_addr: ":8443"
+      tls:
+        enabled: true
+        cert_file: /tls/tls.crt
+        key_file: /tls/tls.key
+    providers:
+      anthropic:
+        base_url: "https://api.anthropic.com"
+        api_key_env: "ANTHROPIC_API_KEY"
+        headers:
+          anthropic-version: "2023-06-01"
+        rate_limit_rpm: 1000
+        max_retries: 3
+      openai:
+        base_url: "https://api.openai.com"
+        api_key_env: "OPENAI_API_KEY"
+        rate_limit_rpm: 500
+        max_retries: 3
+    agents:
+      claude-code:
+        enabled: true
+        optimize: true
+        toon_threshold: 0.6
+        compact_json: true
+        cache_ttl: "300s"
+        max_context_size: 200000
+        spend_limit_usd: 100.0
+      cursor:
+        enabled: true
+        optimize: true
+        toon_threshold: 0.8
+        compact_json: true
+        cache_ttl: "120s"
+        max_context_size: 128000
+        spend_limit_usd: 50.0
+      unknown:
+        enabled: true
+        optimize: true
+        toon_threshold: 0.8
+        compact_json: true
+        cache_ttl: "60s"
+        max_context_size: 128000
+        spend_limit_usd: 25.0
+    optimizer:
+      toon_enabled: true
+      compact_json_enabled: true
+      context_pruning: true
+      min_savings_percent: 5.0
+      max_payload_size_kb: 5120
+      strip_whitespace: true
+      deduplicate_tool_results: true
+    classifier:
+      json_detection: true
+      min_array_length: 3
+      uniformity_threshold: 0.8
+    cache:
+      enabled: true
+      backend: "redis"
+      redis_url: "redis-master.llm-gateway.svc.cluster.local:6379"
+      max_size_mb: 512
+      default_ttl: "300s"
+    metrics:
+      enabled: true
+      detail_level: "detailed"
+
+---
+# Secret for API keys (base64 encode your actual keys)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: llm-api-keys
+  namespace: llm-gateway
+type: Opaque
+data:
+  ANTHROPIC_API_KEY: ""   # base64 encoded
+  OPENAI_API_KEY: ""      # base64 encoded
+  GEMINI_API_KEY: ""      # base64 encoded
+
+---
+# DaemonSet — runs on every node so agents can hit localhost
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: llm-token-gateway
+  namespace: llm-gateway
+  labels:
+    app.kubernetes.io/name: llm-token-gateway
+    app.kubernetes.io/component: proxy
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: llm-token-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: llm-token-gateway
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8443"
+        prometheus.io/path: "/gateway/metrics"
+    spec:
+      serviceAccountName: llm-gateway
+      containers:
+        - name: gateway
+          image: ghcr.io/rajibmitra/llm-token-gateway:latest
+          args:
+            - "--config=/etc/gateway/gateway.yaml"
+          ports:
+            - containerPort: 8443
+              name: https
+              hostPort: 8443
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: llm-api-keys
+          volumeMounts:
+            - name: config
+              mountPath: /etc/gateway
+              readOnly: true
+            - name: tls
+              mountPath: /tls
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /gateway/health
+              port: 8443
+              scheme: HTTPS
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /gateway/health
+              port: 8443
+              scheme: HTTPS
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          securityContext:
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65534
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: gateway-config
+        - name: tls
+          secret:
+            secretName: gateway-tls
+
+---
+# ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: llm-gateway
+  namespace: llm-gateway
+
+---
+# Service (for in-cluster access + Prometheus scraping)
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-token-gateway
+  namespace: llm-gateway
+  labels:
+    app.kubernetes.io/name: llm-token-gateway
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8443
+      targetPort: 8443
+      name: https
+  selector:
+    app.kubernetes.io/name: llm-token-gateway
+
+---
+# PodMonitor for Prometheus Operator
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: llm-token-gateway
+  namespace: llm-gateway
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: llm-token-gateway
+  podMetricsEndpoints:
+    - port: https
+      path: /gateway/metrics
+      scheme: https
+      tlsConfig:
+        insecureSkipVerify: true

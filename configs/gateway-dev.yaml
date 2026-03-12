@@ -1,0 +1,56 @@
+server:
+  listen_addr: ":8443"
+  tls:
+    enabled: false
+
+providers:
+  anthropic:
+    base_url: "https://api.anthropic.com"
+    api_key_env: "ANTHROPIC_API_KEY"
+    headers:
+      anthropic-version: "2023-06-01"
+    rate_limit_rpm: 1000
+    max_retries: 3
+
+agents:
+  claude-code:
+    enabled: true
+    optimize: true
+    toon_threshold: 0.6
+    compact_json: true
+    cache_ttl: "300s"
+    max_context_size: 200000
+    spend_limit_usd: 100.0
+
+  unknown:
+    enabled: true
+    optimize: true
+    toon_threshold: 0.8
+    compact_json: true
+    cache_ttl: "60s"
+    max_context_size: 128000
+    spend_limit_usd: 25.0
+
+optimizer:
+  toon_enabled: true
+  compact_json_enabled: true
+  context_pruning: true
+  min_savings_percent: 5.0
+  max_payload_size_kb: 5120
+  strip_whitespace: true
+  deduplicate_tool_results: true
+
+classifier:
+  json_detection: true
+  min_array_length: 3
+  uniformity_threshold: 0.8
+
+cache:
+  enabled: true
+  backend: "memory"
+  max_size_mb: 256
+  default_ttl: "300s"
+
+metrics:
+  enabled: true
+  detail_level: "detailed"

@@ -1,0 +1,114 @@
+# LLM Token Gateway Configuration
+# ================================
+# This gateway intercepts LLM API requests, optimizes token usage via TOON encoding
+# and other strategies, and forwards to the actual provider APIs.
+#
+# Environment variables are expanded: ${VAR_NAME} syntax
+
+server:
+  listen_addr: ":8443"
+  tls:
+    enabled: false
+    cert_file: ""
+    key_file: ""
+
+# LLM Provider configurations
+# API keys are read from environment variables for security
+providers:
+  anthropic:
+    base_url: "https://api.anthropic.com"
+    api_key_env: "ANTHROPIC_API_KEY"
+    headers:
+      anthropic-version: "2023-06-01"
+    rate_limit_rpm: 1000
+    max_retries: 3
+
+  openai:
+    base_url: "https://api.openai.com"
+    api_key_env: "OPENAI_API_KEY"
+    rate_limit_rpm: 500
+    max_retries: 3
+
+  gemini:
+    base_url: "https://generativelanguage.googleapis.com"
+    api_key_env: "GEMINI_API_KEY"
+    rate_limit_rpm: 500
+    max_retries: 3
+
+# Agent-specific optimization profiles
+# Each agent can have different optimization thresholds
+agents:
+  claude-code:
+    enabled: true
+    optimize: true
+    toon_threshold: 0.6       # Claude Code sends lots of tool results — high TOON eligibility
+    compact_json: true
+    cache_ttl: "300s"
+    max_context_size: 200000
+    spend_limit_usd: 100.0    # Monthly cap
+
+  cursor:
+    enabled: true
+    optimize: true
+    toon_threshold: 0.8       # Cursor sends more code — higher threshold
+    compact_json: true
+    cache_ttl: "120s"
+    max_context_size: 128000
+    spend_limit_usd: 50.0
+
+  aider:
+    enabled: true
+    optimize: true
+    toon_threshold: 0.7
+    compact_json: true
+    cache_ttl: "180s"
+    max_context_size: 200000
+    spend_limit_usd: 75.0
+
+  continue:
+    enabled: true
+    optimize: true
+    toon_threshold: 0.7
+    compact_json: true
+    cache_ttl: "120s"
+    max_context_size: 128000
+    spend_limit_usd: 50.0
+
+  unknown:
+    enabled: true
+    optimize: true
+    toon_threshold: 0.8       # Conservative for unknown agents
+    compact_json: true
+    cache_ttl: "60s"
+    max_context_size: 128000
+    spend_limit_usd: 25.0
+
+# Token optimization settings
+optimizer:
+  toon_enabled: true
+  compact_json_enabled: true
+  context_pruning: true
+  min_savings_percent: 5.0     # Skip TOON if savings < 5%
+  max_payload_size_kb: 5120    # 5MB safety limit
+  strip_whitespace: true
+  deduplicate_tool_results: true
+
+# Content classifier tuning
+classifier:
+  json_detection: true
+  min_array_length: 3           # Minimum rows for tabular encoding
+  uniformity_threshold: 0.8     # How consistent fields must be (0.0-1.0)
+
+# Prompt cache
+cache:
+  enabled: true
+  backend: "memory"             # "memory" for local dev, "redis" for production
+  redis_url: ""
+  max_size_mb: 256
+  default_ttl: "300s"
+
+# Observability
+metrics:
+  enabled: true
+  endpoint: ""                  # Prometheus push gateway URL (optional)
+  detail_level: "detailed"      # "basic", "detailed", "verbose"
